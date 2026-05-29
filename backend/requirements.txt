@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+python-dotenv
+groq
+sqlalchemy
+pandas
+psycopg2-binary
+python-jose[cryptography]
+requests
