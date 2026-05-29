@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environments
+venv/
+.env
+
+# Node
+node_modules/
+
+# VS Code
+.vscode/
+
+# Mac
+.DS_Store
+
+# Build files
+dist/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Environment variables
+.env.local
+.env.production
+
+raw/
+processed/
+*.xlsx
+.env
+
+# Workout data
+raw/
+processed/
+
+# Environment files anywhere
+.env
+**/.env
+
+# Python cache anywhere
+__pycache__/
+**/__pycache__/
+
+# Power BI
+*.pbix
+
+# Temporary gitignore mistake
+.gitignore.txt
