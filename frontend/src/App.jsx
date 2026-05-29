@@ -354,13 +354,30 @@ function markFirstPrPoint(records) {
 
 function PrDot({ cx, cy, payload }) {
   if (!payload?.is_pr) {
-    return <circle cx={cx} cy={cy} r={4} fill="#38f8ff" strokeWidth={0} />;
+    return (
+      <circle
+        cx={cx}
+        cy={cy}
+        r={4}
+        fill="#38f8ff"
+      />
+    );
   }
 
   return (
     <g>
-      <circle cx={cx} cy={cy} r={9} fill="#050505" stroke="#d7ff3f" strokeWidth={3} />
-      <text x={cx} y={cy - 14} textAnchor="middle" fontSize="18">
+      <circle
+        cx={cx}
+        cy={cy}
+        r={8}
+        fill="#d7ff3f"
+      />
+      <text
+        x={cx}
+        y={cy + 5}
+        textAnchor="middle"
+        fontSize="10"
+      >
         🏆
       </text>
     </g>
@@ -1616,6 +1633,7 @@ function BodyMetricsPage({ isGuest, session, guestBodyMetric, setGuestBodyMetric
             Weight
             <input
               min="1"
+              step="0.1"
               type="number"
               value={weight}
               onChange={(event) => setWeight(event.target.value)}
@@ -1641,6 +1659,7 @@ function BodyMetricsPage({ isGuest, session, guestBodyMetric, setGuestBodyMetric
               Height
               <input
                 min="1"
+                step="0.1"
                 type="number"
                 value={heightCm}
                 onChange={(event) => setHeightCm(event.target.value)}
@@ -1662,7 +1681,7 @@ function BodyMetricsPage({ isGuest, session, guestBodyMetric, setGuestBodyMetric
               <label>
                 Inches
                 <input
-                  min="0"
+                  min="1"
                   type="number"
                   value={heightInches}
                   onChange={(event) => setHeightInches(event.target.value)}
@@ -1701,7 +1720,7 @@ function BodyMetricsPage({ isGuest, session, guestBodyMetric, setGuestBodyMetric
                   <tr key={metric.metric_id}>
                     <td>{formatDateOnly(metric.metric_date)}</td>
                     <td>{formatWeightLbs(Number(metric.weight_kg) / 0.45359237)}</td>
-                    <td>{Math.round(Number(metric.height_cm))} cm</td>
+                    <td>{Number(metric.height_cm).toFixed(1)} cm</td>
                   </tr>
                 ))}
               </tbody>
