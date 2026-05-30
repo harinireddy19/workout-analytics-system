@@ -1462,6 +1462,7 @@ function ExerciseEntryPage({
                   Weight (lbs)
                   <input
                     type="number"
+                    step="0.1"
                     min={WEIGHT_LIMITS.min}
                     max={WEIGHT_LIMITS.max}
                     value={setRow.weight_lbs}
