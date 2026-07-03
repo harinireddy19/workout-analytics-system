@@ -17,7 +17,7 @@ import {
 
 const API_BASE =
   import.meta.env.VITE_API_BASE ||
-  "https://workout-analytics-dashboard-production.up.railway.app";
+  "https://workout-analytics-system.onrender.com";
 
 const demoDashboard = {
   total_workouts: 128,
