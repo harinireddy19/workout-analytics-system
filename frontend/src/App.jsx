@@ -57,6 +57,14 @@ const demoWeightProgression = {
   trend: "down",
 };
 
+const demoBodyMetrics = demoWeightProgression.records.map((record, index) => ({
+  metric_id: `demo-body-metric-${index}`,
+  metric_date: record.metric_date,
+  weight_kg: record.weight_kg,
+  height_cm: 165,
+  isDemo: true,
+}));
+
 const demoAchievements = [
   { exercise: "Bench Press", improvement_lbs: 10, current_pr: 205, previous_pr: 195 },
   { exercise: "Hip Thrust", improvement_lbs: 20, current_pr: 275, previous_pr: 255 },
@@ -311,6 +319,109 @@ function formatWeightChange(value) {
   if (roundedValue === 0) return "No change this month";
 
   return `${roundedValue > 0 ? "Up" : "Down"} ${Math.abs(roundedValue).toLocaleString()} lbs this month`;
+}
+
+function formatPercent(value) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return "0%";
+
+  return `${Number(value).toFixed(1)}%`;
+}
+
+function formatVolume(value) {
+  return Math.round(Number(value) || 0).toLocaleString();
+}
+
+function metricToForm(metric) {
+  return {
+    metricDate: formatDateOnly(metric.metric_date),
+    weight: String(Math.round((Number(metric.weight_kg) / 0.45359237) * 10) / 10),
+    weightUnit: "lbs",
+    heightUnit: "cm",
+    heightCm: String(Math.round(Number(metric.height_cm) * 10) / 10),
+    heightFeet: "",
+    heightInches: "",
+  };
+}
+
+function buildBodyMetricPayload(formState) {
+  return {
+    metric_date: formState.metricDate,
+    weight: Number(formState.weight),
+    weight_unit: formState.weightUnit,
+    height_unit: formState.heightUnit,
+    height_cm: formState.heightUnit === "cm" ? Number(formState.heightCm) : null,
+    height_feet: formState.heightUnit === "ft_in" ? Number(formState.heightFeet) : null,
+    height_inches: formState.heightUnit === "ft_in" ? Number(formState.heightInches) : null,
+  };
+}
+
+function validateBodyMetricForm(formState) {
+  if (!formState.metricDate) return "Choose a metric date.";
+  if (!Number.isFinite(Number(formState.weight)) || Number(formState.weight) <= 0) {
+    return "Weight must be greater than 0.";
+  }
+
+  if (formState.heightUnit === "cm") {
+    if (!Number.isFinite(Number(formState.heightCm)) || Number(formState.heightCm) <= 0) {
+      return "Height must be greater than 0 cm.";
+    }
+    return "";
+  }
+
+  if (!Number.isFinite(Number(formState.heightFeet)) || Number(formState.heightFeet) < 0) {
+    return "Feet cannot be negative.";
+  }
+
+  if (!Number.isFinite(Number(formState.heightInches)) || Number(formState.heightInches) <= 0) {
+    return "Inches must be greater than 0.";
+  }
+
+  return "";
+}
+
+function summarizeWorkout(workout) {
+  if (!workout?.exercises) {
+    return {
+      totalVolume: 0,
+      muscleDistribution: [],
+    };
+  }
+
+  if (Array.isArray(workout.muscle_distribution)) {
+    return {
+      totalVolume: Number(workout.total_volume) || 0,
+      muscleDistribution: workout.muscle_distribution,
+    };
+  }
+
+  const muscleTotals = {};
+  let totalVolume = 0;
+
+  workout.exercises.forEach((exerciseBlock) => {
+    exerciseBlock.sets.forEach((setRow) => {
+      const volume = Number(setRow.volume) || Number(setRow.weight_lbs) * Number(setRow.reps);
+      const muscleGroup = setRow.muscle_group || classifyGuestExercise(exerciseBlock.exercise);
+      muscleTotals[muscleGroup] = (muscleTotals[muscleGroup] || 0) + volume;
+      totalVolume += volume;
+    });
+  });
+
+  return {
+    totalVolume,
+    muscleDistribution: Object.entries(muscleTotals)
+      .map(([muscle_group, total_volume]) => ({
+        muscle_group,
+        total_volume,
+        percentage: totalVolume ? (total_volume / totalVolume) * 100 : 0,
+      }))
+      .sort((a, b) => b.total_volume - a.total_volume),
+  };
+}
+
+function metricMatchesRange(metric, fromDate, toDate) {
+  const metricDate = formatDateOnly(metric.metric_date);
+
+  return (!fromDate || metricDate >= fromDate) && (!toDate || metricDate <= toDate);
 }
 
 function buildSingleMetricProgression(metric) {
@@ -686,6 +797,8 @@ function Dashboard({
   onAddWorkout,
   onPreviousWorkouts,
   onBodyMetrics,
+  onExportData,
+  onAiChat,
   onResumeWorkout,
   guestSavedWorkout,
   guestBodyMetric,
@@ -835,13 +948,13 @@ function Dashboard({
   }
 
   return (
-    <main className="app-shell">
-      <nav className="app-nav">
-        <div>
+    <main className="app-shell dashboard-layout">
+      <aside className="app-sidebar">
+        <div className="sidebar-brand">
           <span className="nav-mark">WA</span>
           <span>{isGuest ? "Guest Demo" : "Owner Dashboard"}</span>
         </div>
-        <div className="nav-actions">
+        <div className="sidebar-actions">
           {!isGuest && session?.user?.email && <span className="user-email">{session.user.email}</span>}
           <button
             className="secondary-action"
@@ -859,6 +972,16 @@ function Dashboard({
             Body Metrics
           </button>
           {!isGuest && (
+            <button className="secondary-action" type="button" onClick={onExportData}>
+              Export Data
+            </button>
+          )}
+          {!isGuest && (
+            <button className="secondary-action" type="button" onClick={onAiChat}>
+              AI Chat
+            </button>
+          )}
+          {!isGuest && (
             <button className="ghost-action" type="button" onClick={onSignOut}>
               Sign out
             </button>
@@ -867,7 +990,9 @@ function Dashboard({
             Switch mode
           </button>
         </div>
-      </nav>
+      </aside>
+
+      <div className="dashboard-main">
 
       {draft && !isGuest && (
         <section className="progress-banner">
@@ -1091,6 +1216,7 @@ function Dashboard({
           <InsightText text={displayAiInsight} />
         )}
       </section>
+      </div>
     </main>
   );
 }
@@ -1518,61 +1644,138 @@ function ExerciseEntryPage({
 }
 
 function BodyMetricsPage({ isGuest, session, guestBodyMetric, setGuestBodyMetric, onBack }) {
-  const [metricDate, setMetricDate] = useState(() => new Date().toISOString().split("T")[0]);
-  const [weight, setWeight] = useState("");
-  const [weightUnit, setWeightUnit] = useState("lbs");
-  const [heightUnit, setHeightUnit] = useState("ft_in");
-  const [heightCm, setHeightCm] = useState("");
-  const [heightFeet, setHeightFeet] = useState("");
-  const [heightInches, setHeightInches] = useState("");
-  const [metrics, setMetrics] = useState(() => (guestBodyMetric ? [guestBodyMetric] : []));
+  const emptyMetricForm = {
+    metricDate: new Date().toISOString().split("T")[0],
+    weight: "",
+    weightUnit: "lbs",
+    heightUnit: "ft_in",
+    heightCm: "",
+    heightFeet: "",
+    heightInches: "",
+  };
+  const initialGuestMetrics = guestBodyMetric ? [guestBodyMetric, ...demoBodyMetrics] : demoBodyMetrics;
+  const [formState, setFormState] = useState(emptyMetricForm);
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+  const [metrics, setMetrics] = useState(() => (isGuest ? initialGuestMetrics : []));
+  const [editingMetricId, setEditingMetricId] = useState("");
   const [status, setStatus] = useState("");
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
+    if (!isGuest) return;
+
+    setMetrics(guestBodyMetric ? [guestBodyMetric, ...demoBodyMetrics] : demoBodyMetrics);
+  }, [guestBodyMetric, isGuest]);
+
+  useEffect(() => {
     if (isGuest || !session) return;
 
-    authFetch("/body-metrics", session)
-      .then((res) => res.json())
-      .then((data) => setMetrics(Array.isArray(data) ? data : []))
-      .catch((err) => {
-        console.error(err);
-        setStatus("Could not load body metrics.");
-      });
+    loadMetrics();
   }, [isGuest, session]);
 
   if (!isGuest && !session) {
     return <SignedOutNotice onBack={onBack} />;
   }
 
-  function buildLocalMetric() {
-    const weightKg = weightUnit === "kg" ? Number(weight) : Number(weight) * 0.45359237;
-    const normalizedHeightCm =
-      heightUnit === "cm"
-        ? Number(heightCm)
-        : ((Number(heightFeet) || 0) * 12 + (Number(heightInches) || 0)) * 2.54;
+  function updateMetricForm(field, value) {
+    setFormState((currentForm) => ({
+      ...currentForm,
+      [field]: value,
+    }));
+  }
+
+  function resetMetricForm() {
+    setFormState(emptyMetricForm);
+    setEditingMetricId("");
+  }
+
+  function localMetricFromForm(metricId = "guest-body-metric") {
+    const payload = buildBodyMetricPayload(formState);
+    const weightKg = payload.weight_unit === "kg" ? payload.weight : payload.weight * 0.45359237;
+    const heightCm =
+      payload.height_unit === "cm"
+        ? payload.height_cm
+        : ((payload.height_feet || 0) * 12 + (payload.height_inches || 0)) * 2.54;
 
     return {
-      metric_id: "guest-body-metric",
-      metric_date: metricDate,
+      metric_id: metricId,
+      metric_date: payload.metric_date,
       weight_kg: weightKg,
-      height_cm: normalizedHeightCm,
+      height_cm: heightCm,
+      isGuestTemporary: true,
     };
+  }
+
+  async function loadMetrics(nextFromDate = fromDate, nextToDate = toDate) {
+    if (isGuest) {
+      const filteredMetrics = (guestBodyMetric ? [guestBodyMetric, ...demoBodyMetrics] : demoBodyMetrics).filter(
+        (metric) => metricMatchesRange(metric, nextFromDate, nextToDate),
+      );
+      setMetrics(filteredMetrics);
+      setStatus(filteredMetrics.length ? "" : "No body metrics found in that range.");
+      return;
+    }
+
+    if (!session) return;
+
+    setStatus("");
+
+    const params = new URLSearchParams();
+    if (nextFromDate) params.set("from_date", nextFromDate);
+    if (nextToDate) params.set("to_date", nextToDate);
+    const suffix = params.toString() ? `?${params.toString()}` : "";
+
+    try {
+      const response = await authFetch(`/body-metrics${suffix}`, session);
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.detail || "Could not load body metrics.");
+      }
+
+      setMetrics(Array.isArray(data) ? data : []);
+      setStatus(Array.isArray(data) && data.length ? "" : "No body metrics found in that range.");
+    } catch (error) {
+      setStatus(error.message);
+    }
+  }
+
+  function searchMetrics(event) {
+    event.preventDefault();
+
+    if (fromDate && toDate && fromDate > toDate) {
+      setStatus("From date must be before or equal to To date.");
+      return;
+    }
+
+    loadMetrics(fromDate, toDate);
   }
 
   async function saveMetric(event) {
     event.preventDefault();
+    const validationError = validateBodyMetricForm(formState);
+
+    if (validationError) {
+      setStatus(validationError);
+      return;
+    }
 
     if (isGuest) {
-      if (metrics.length >= 1) {
+      if (editingMetricId && editingMetricId !== "guest-body-metric") {
+        setStatus("Sample body metrics cannot be edited in guest mode.");
+        return;
+      }
+
+      if (!editingMetricId && guestBodyMetric) {
         setStatus("Guest mode allows one temporary body metric entry.");
         return;
       }
 
-      const nextMetric = buildLocalMetric();
+      const nextMetric = localMetricFromForm("guest-body-metric");
       setGuestBodyMetric(nextMetric);
-      setMetrics([nextMetric]);
-      setStatus("Temporary body metric saved for this visit.");
+      setStatus(editingMetricId ? "Temporary body metric updated." : "Temporary body metric saved for this visit.");
+      resetMetricForm();
       return;
     }
 
@@ -1580,35 +1783,72 @@ function BodyMetricsPage({ isGuest, session, guestBodyMetric, setGuestBodyMetric
     setStatus("");
 
     try {
-      const response = await authFetch("/body-metrics", session, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
+      const response = await authFetch(
+        editingMetricId ? `/body-metrics/${encodeURIComponent(editingMetricId)}` : "/body-metrics",
+        session,
+        {
+          method: editingMetricId ? "PUT" : "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(buildBodyMetricPayload(formState)),
         },
-        body: JSON.stringify({
-          metric_date: metricDate,
-          weight: Number(weight),
-          weight_unit: weightUnit,
-          height_unit: heightUnit,
-          height_cm: heightUnit === "cm" ? Number(heightCm) : null,
-          height_feet: heightUnit === "ft_in" ? Number(heightFeet) : null,
-          height_inches: heightUnit === "ft_in" ? Number(heightInches) : null,
-        }),
-      });
+      );
       const data = await response.json();
 
       if (!response.ok) {
         throw new Error(data.detail || "Could not save body metrics.");
       }
 
-      setMetrics((currentMetrics) => [data, ...currentMetrics]);
-      setStatus("Body metrics saved.");
-      setWeight("");
+      resetMetricForm();
+      setStatus(editingMetricId ? "Body metric updated." : "Body metric saved.");
+      loadMetrics();
     } catch (error) {
       setStatus(error.message);
     } finally {
       setSaving(false);
     }
+  }
+
+  function editMetric(metric) {
+    if (isGuest && metric.metric_id !== "guest-body-metric") {
+      setStatus("Sample body metrics are read-only in guest mode.");
+      return;
+    }
+
+    setEditingMetricId(metric.metric_id);
+    setFormState(metricToForm(metric));
+    setStatus("");
+  }
+
+  async function deleteMetric(metric) {
+    if (isGuest) {
+      if (metric.metric_id !== "guest-body-metric") {
+        setStatus("Sample body metrics are read-only in guest mode.");
+        return;
+      }
+
+      setGuestBodyMetric(null);
+      resetMetricForm();
+      setStatus("Temporary body metric deleted.");
+      return;
+    }
+
+    const confirmed = window.confirm("Delete this body metric entry?");
+    if (!confirmed) return;
+
+    const response = await authFetch(`/body-metrics/${encodeURIComponent(metric.metric_id)}`, session, {
+      method: "DELETE",
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      setStatus(error.detail || "Could not delete body metric.");
+      return;
+    }
+
+    setMetrics((currentMetrics) => currentMetrics.filter((currentMetric) => currentMetric.metric_id !== metric.metric_id));
+    setStatus("Body metric deleted.");
   }
 
   return (
@@ -1618,17 +1858,36 @@ function BodyMetricsPage({ isGuest, session, guestBodyMetric, setGuestBodyMetric
           Back to dashboard
         </button>
         <span className="eyebrow">Body Metrics</span>
-        <h1>Log body metrics.</h1>
+        <h1>Body metric history.</h1>
         <p>
           {isGuest
-            ? "Guest metrics stay in this visit only and disappear after refresh."
-            : "Weight and height are converted before storage so your progress stays consistent."}
+            ? "Guest metrics include sample entries plus one temporary entry that disappears after refresh."
+            : "Search, update, and export normalized body metric history."}
         </p>
+
+        <form className="range-form" onSubmit={searchMetrics}>
+          <label>
+            From
+            <input type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} />
+          </label>
+          <label>
+            To
+            <input type="date" value={toDate} onChange={(event) => setToDate(event.target.value)} />
+          </label>
+          <button className="primary-action" type="submit">
+            Find Metrics
+          </button>
+        </form>
 
         <form className="body-metrics-form" onSubmit={saveMetric}>
           <label>
             Date
-            <input type="date" value={metricDate} onChange={(event) => setMetricDate(event.target.value)} required />
+            <input
+              type="date"
+              value={formState.metricDate}
+              onChange={(event) => updateMetricForm("metricDate", event.target.value)}
+              required
+            />
           </label>
           <label>
             Weight
@@ -1636,34 +1895,34 @@ function BodyMetricsPage({ isGuest, session, guestBodyMetric, setGuestBodyMetric
               min="1"
               step="0.1"
               type="number"
-              value={weight}
-              onChange={(event) => setWeight(event.target.value)}
+              value={formState.weight}
+              onChange={(event) => updateMetricForm("weight", event.target.value)}
               required
             />
           </label>
           <label>
             Weight Unit
-            <select value={weightUnit} onChange={(event) => setWeightUnit(event.target.value)}>
+            <select value={formState.weightUnit} onChange={(event) => updateMetricForm("weightUnit", event.target.value)}>
               <option value="lbs">lbs</option>
               <option value="kg">kg</option>
             </select>
           </label>
           <label>
             Height Unit
-            <select value={heightUnit} onChange={(event) => setHeightUnit(event.target.value)}>
+            <select value={formState.heightUnit} onChange={(event) => updateMetricForm("heightUnit", event.target.value)}>
               <option value="ft_in">feet/inches</option>
               <option value="cm">cm</option>
             </select>
           </label>
-          {heightUnit === "cm" ? (
+          {formState.heightUnit === "cm" ? (
             <label>
               Height
               <input
                 min="1"
                 step="0.1"
                 type="number"
-                value={heightCm}
-                onChange={(event) => setHeightCm(event.target.value)}
+                value={formState.heightCm}
+                onChange={(event) => updateMetricForm("heightCm", event.target.value)}
                 required
               />
             </label>
@@ -1674,8 +1933,8 @@ function BodyMetricsPage({ isGuest, session, guestBodyMetric, setGuestBodyMetric
                 <input
                   min="0"
                   type="number"
-                  value={heightFeet}
-                  onChange={(event) => setHeightFeet(event.target.value)}
+                  value={formState.heightFeet}
+                  onChange={(event) => updateMetricForm("heightFeet", event.target.value)}
                   required
                 />
               </label>
@@ -1683,52 +1942,236 @@ function BodyMetricsPage({ isGuest, session, guestBodyMetric, setGuestBodyMetric
                 Inches
                 <input
                   min="1"
+                  step="0.1"
                   type="number"
-                  value={heightInches}
-                  onChange={(event) => setHeightInches(event.target.value)}
+                  value={formState.heightInches}
+                  onChange={(event) => updateMetricForm("heightInches", event.target.value)}
                   required
                 />
               </label>
             </>
           )}
           <button className="primary-action logger-submit" disabled={saving} type="submit">
-            {saving ? "Saving..." : "Save Metrics"}
+            {saving ? "Saving..." : editingMetricId ? "Update Metrics" : "Save Metrics"}
           </button>
+          {editingMetricId && (
+            <button className="ghost-action logger-submit" type="button" onClick={resetMetricForm}>
+              Cancel Edit
+            </button>
+          )}
         </form>
 
         {status && <div className="auth-message">{status}</div>}
       </section>
 
-      {metrics.length > 0 && (
-        <section className="panel history-detail">
-          <div className="panel-header">
-            <div>
-              <span>Recent Entries</span>
-              <h3>Body Metrics</h3>
-            </div>
+      <section className="panel history-detail">
+        <div className="panel-header">
+          <div>
+            <span>{isGuest ? "Sample and Temporary Entries" : "Saved Entries"}</span>
+            <h3>Body Metrics</h3>
           </div>
-          <div className="workout-table-wrap">
-            <table className="workout-table">
-              <thead>
-                <tr>
-                  <th>Date</th>
-                  <th>Weight</th>
-                  <th>Height</th>
+        </div>
+        <div className="workout-table-wrap">
+          <table className="workout-table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Weight</th>
+                <th>Height</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {metrics.map((metric) => (
+                <tr key={metric.metric_id}>
+                  <td>{formatDateOnly(metric.metric_date)}</td>
+                  <td>{formatWeightLbs(Number(metric.weight_kg) / 0.45359237)}</td>
+                  <td>{Number(metric.height_cm).toFixed(1)} cm</td>
+                  <td>
+                    <div className="table-actions">
+                      <button className="ghost-action" type="button" onClick={() => editMetric(metric)}>
+                        Edit
+                      </button>
+                      <button className="danger-action" type="button" onClick={() => deleteMetric(metric)}>
+                        Delete
+                      </button>
+                    </div>
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {metrics.slice(0, 8).map((metric) => (
-                  <tr key={metric.metric_id}>
-                    <td>{formatDateOnly(metric.metric_date)}</td>
-                    <td>{formatWeightLbs(Number(metric.weight_kg) / 0.45359237)}</td>
-                    <td>{Number(metric.height_cm).toFixed(1)} cm</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      )}
+              ))}
+              {metrics.length === 0 && (
+                <tr>
+                  <td colSpan="4">No body metrics found.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  );
+}
+
+function ExportDataPage({ session, onBack }) {
+  const [tableName, setTableName] = useState("workouts");
+  const [fileFormat, setFileFormat] = useState("csv");
+  const [status, setStatus] = useState("");
+  const [downloading, setDownloading] = useState(false);
+
+  if (!session) {
+    return <SignedOutNotice onBack={onBack} />;
+  }
+
+  async function downloadExport(event) {
+    event.preventDefault();
+    setDownloading(true);
+    setStatus("");
+
+    try {
+      const response = await authFetch(`/export/${tableName}?file_format=${fileFormat}`, session);
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.detail || "Could not export data.");
+      }
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${tableName}.${fileFormat === "xlsx" ? "xlsx" : "csv"}`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      setStatus("Download started.");
+    } catch (error) {
+      setStatus(error.message);
+    } finally {
+      setDownloading(false);
+    }
+  }
+
+  return (
+    <main className="app-shell narrow-shell">
+      <section className="panel flow-panel">
+        <button className="ghost-action back-action" type="button" onClick={onBack}>
+          Back to dashboard
+        </button>
+        <span className="eyebrow">Data Export</span>
+        <h1>Download your data.</h1>
+        <p>Choose a table and file type. Exports are scoped to your signed-in account.</p>
+
+        <form className="body-metrics-form" onSubmit={downloadExport}>
+          <label>
+            Table
+            <select value={tableName} onChange={(event) => setTableName(event.target.value)}>
+              <option value="workouts">Workouts</option>
+              <option value="exercise_logs">Exercise Logs</option>
+              <option value="body_metrics">Body Metrics</option>
+            </select>
+          </label>
+          <label>
+            Format
+            <select value={fileFormat} onChange={(event) => setFileFormat(event.target.value)}>
+              <option value="csv">CSV</option>
+              <option value="xlsx">Excel</option>
+            </select>
+          </label>
+          <button className="primary-action logger-submit" disabled={downloading} type="submit">
+            {downloading ? "Preparing..." : "Download"}
+          </button>
+        </form>
+
+        {status && <div className="auth-message">{status}</div>}
+      </section>
+    </main>
+  );
+}
+
+function AiChatPage({ session, onBack }) {
+  const [message, setMessage] = useState("");
+  const [messages, setMessages] = useState([]);
+  const [status, setStatus] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  if (!session) {
+    return <SignedOutNotice onBack={onBack} />;
+  }
+
+  async function sendMessage(event) {
+    event.preventDefault();
+
+    if (!message.trim()) return;
+
+    const nextQuestion = message.trim();
+    setMessages((currentMessages) => [...currentMessages, { role: "user", content: nextQuestion }]);
+    setMessage("");
+    setLoading(true);
+    setStatus("");
+
+    try {
+      const response = await authFetch("/ai-chat", session, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          message: nextQuestion,
+        }),
+      });
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.detail || "Could not get an AI response.");
+      }
+
+      setMessages((currentMessages) => [...currentMessages, { role: "assistant", content: data.answer }]);
+    } catch (error) {
+      setStatus(error.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <main className="app-shell">
+      <section className="panel flow-panel">
+        <button className="ghost-action back-action" type="button" onClick={onBack}>
+          Back to dashboard
+        </button>
+        <span className="eyebrow">AI Chat</span>
+        <h1>Ask your training data.</h1>
+        <p>Ask about volume, recovery, muscle balance, exercise choices, or recent training patterns.</p>
+
+        <div className="chat-thread">
+          {messages.map((chatMessage, index) => (
+            <div className={`chat-message ${chatMessage.role}`} key={`${chatMessage.role}-${index}`}>
+              {chatMessage.content}
+            </div>
+          ))}
+          {messages.length === 0 && (
+            <div className="chat-message assistant">
+              Ask a question like "What muscles am I undertraining?" or "How should I adjust next week?"
+            </div>
+          )}
+        </div>
+
+        <form className="chat-form" onSubmit={sendMessage}>
+          <input
+            type="text"
+            value={message}
+            onChange={(event) => setMessage(event.target.value)}
+            placeholder="Ask a question..."
+            maxLength={1200}
+          />
+          <button className="primary-action" disabled={loading} type="submit">
+            {loading ? "Thinking..." : "Send"}
+          </button>
+        </form>
+
+        {status && <div className="auth-message">{status}</div>}
+      </section>
     </main>
   );
 }
@@ -1951,6 +2394,8 @@ function PreviousWorkoutsPage({ isGuest, session, onBack, onSignIn }) {
     setStatus("Workout deleted.");
   }
 
+  const selectedWorkoutSummary = summarizeWorkout(selectedWorkout);
+
   return (
     <main className="app-shell">
       <section className="panel flow-panel">
@@ -2038,6 +2483,28 @@ function PreviousWorkoutsPage({ isGuest, session, onBack, onSignIn }) {
               Sign in to edit or delete workouts.
             </div>
           )}
+
+          <div className="workout-summary-grid">
+            <div className="summary-tile">
+              <span>Total Volume</span>
+              <strong>{formatVolume(selectedWorkoutSummary.totalVolume)} lbs</strong>
+            </div>
+            <div className="summary-tile muscle-summary">
+              <span>Muscle Distribution</span>
+              {selectedWorkoutSummary.muscleDistribution.length > 0 ? (
+                <div className="muscle-distribution-list">
+                  {selectedWorkoutSummary.muscleDistribution.map((muscle) => (
+                    <div className="muscle-distribution-row" key={muscle.muscle_group}>
+                      <span>{muscle.muscle_group}</span>
+                      <strong>{formatPercent(muscle.percentage)}</strong>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <strong>--</strong>
+              )}
+            </div>
+          </div>
 
           {editing && (
             <div className="session-fields edit-session-fields">
@@ -2176,6 +2643,8 @@ function App() {
       "add-exercise",
       "previous-workouts",
       "body-metrics",
+      "export-data",
+      "ai-chat",
       "guest-body-metrics",
       "guest-add-workout",
       "guest-add-exercise",
@@ -2291,6 +2760,14 @@ function App() {
     );
   }
 
+  if (screen === "export-data") {
+    return <ExportDataPage session={session} onBack={() => goToScreen("user")} />;
+  }
+
+  if (screen === "ai-chat") {
+    return <AiChatPage session={session} onBack={() => goToScreen("user")} />;
+  }
+
   if (screen === "guest-body-metrics") {
     return (
       <BodyMetricsPage
@@ -2312,6 +2789,8 @@ function App() {
       onAddWorkout={() => goToScreen(screen === "guest" ? "guest-add-workout" : "add-workout")}
       onPreviousWorkouts={() => goToScreen(screen === "guest" ? "guest-previous-workouts" : "previous-workouts")}
       onBodyMetrics={() => goToScreen(screen === "guest" ? "guest-body-metrics" : "body-metrics")}
+      onExportData={() => goToScreen("export-data")}
+      onAiChat={() => goToScreen("ai-chat")}
       onResumeWorkout={() => goToScreen("add-exercise")}
       guestSavedWorkout={guestSavedWorkout}
       guestBodyMetric={guestBodyMetric}
