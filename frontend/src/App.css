@@ -4,6 +4,16 @@
   color: #f4f4f5;
 }
 
+.dashboard-layout {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  gap: 24px;
+}
+
+.dashboard-main {
+  min-width: 0;
+}
+
 .entry-shell {
   display: grid;
   min-height: 100vh;
@@ -200,6 +210,35 @@
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 18px;
   background: rgba(5, 5, 5, 0.72);
+}
+
+.app-sidebar {
+  position: sticky;
+  top: 24px;
+  align-self: start;
+  min-height: calc(100vh - 64px);
+  padding: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 18px;
+  background: rgba(5, 5, 5, 0.78);
+}
+
+.sidebar-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 18px;
+  color: #d4d4d8;
+}
+
+.sidebar-actions {
+  display: grid;
+  gap: 10px;
+}
+
+.sidebar-actions button {
+  justify-content: flex-start;
+  width: 100%;
 }
 
 .app-nav > div,
@@ -643,6 +682,56 @@
   margin-top: 20px;
 }
 
+.table-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.table-actions .ghost-action,
+.table-actions .danger-action {
+  min-height: 36px;
+  padding: 0 12px;
+}
+
+.workout-summary-grid {
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) minmax(0, 1fr);
+  gap: 14px;
+  margin-bottom: 22px;
+}
+
+.summary-tile {
+  display: grid;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.summary-tile span,
+.muscle-distribution-row span {
+  color: #a1a1aa;
+}
+
+.summary-tile strong,
+.muscle-distribution-row strong {
+  color: #ffffff;
+  font-weight: 500;
+}
+
+.muscle-distribution-list {
+  display: grid;
+  gap: 8px;
+}
+
+.muscle-distribution-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+
 .exercise-block {
   padding: 16px;
   border: 1px solid rgba(255, 255, 255, 0.08);
@@ -692,6 +781,52 @@
 .body-metrics-form {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   align-items: end;
+}
+
+.chat-thread {
+  display: grid;
+  gap: 12px;
+  max-height: 460px;
+  overflow-y: auto;
+  margin-top: 24px;
+  padding-right: 4px;
+}
+
+.chat-message {
+  max-width: 820px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.chat-message.user {
+  justify-self: end;
+  background: rgba(215, 255, 63, 0.14);
+  color: #f8fafc;
+}
+
+.chat-message.assistant {
+  justify-self: start;
+  background: rgba(255, 255, 255, 0.055);
+  color: #d4d4d8;
+}
+
+.chat-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.chat-form input {
+  min-height: 46px;
+  border: 1px solid rgba(148, 163, 184, 0.26);
+  border-radius: 12px;
+  background: #050505;
+  color: #ffffff;
+  padding: 0 14px;
+  outline: none;
 }
 
 .achievement-list {
@@ -806,6 +941,19 @@
     padding: 20px;
   }
 
+  .dashboard-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .app-sidebar {
+    position: static;
+    min-height: auto;
+  }
+
+  .sidebar-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .entry-panel,
   .dashboard-hero,
   .dashboard-grid,
@@ -820,6 +968,7 @@
 
   .session-fields,
   .range-form,
+  .workout-summary-grid,
   .set-row,
   .exercise-entry .set-row {
     grid-template-columns: 1fr;
@@ -844,9 +993,15 @@
   .app-nav,
   .nav-actions,
   .progress-banner,
-  .logger-actions {
+  .logger-actions,
+  .table-actions,
+  .chat-form {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .sidebar-actions {
+    grid-template-columns: 1fr;
   }
 
   .dashboard-hero,
@@ -861,7 +1016,8 @@
   }
 
   .logger-form,
-  .body-metrics-form {
+  .body-metrics-form,
+  .chat-form {
     grid-template-columns: 1fr;
   }
 
