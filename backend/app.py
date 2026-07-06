@@ -1,11 +1,13 @@
 import os
 import time
+import io
 from uuid import uuid4
 
 from dotenv import load_dotenv
 from groq import Groq
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from jose import JWTError, jwt
 from pydantic import BaseModel, Field
 import requests
@@ -75,6 +77,14 @@ class BodyMetricCreate(BaseModel):
     height_inches: float | None = Field(default=None, ge=0)
 
 
+class BodyMetricUpdate(BodyMetricCreate):
+    pass
+
+
+class ChatRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=1200)
+
+
 GUEST_EXERCISES = {
     "Bench Press",
     "Squat",
@@ -85,6 +95,11 @@ GUEST_EXERCISES = {
 USER_MAX_SETS_PER_EXERCISE = 100
 GUEST_MAX_SETS_PER_EXERCISE = 4
 GUEST_MAX_EXERCISES = 3
+EXPORT_TABLES = {
+    "workouts",
+    "exercise_logs",
+    "body_metrics"
+}
 
 
 def validate_set_counts_by_exercise(sets, max_sets, mode_name):
@@ -152,11 +167,11 @@ def normalize_height_cm(metric):
         feet = metric.height_feet or 0
         inches = metric.height_inches or 0
 
-        if feet == 0 and inches == 0:
+        if inches <= 0:
 
             raise HTTPException(
                 status_code=400,
-                detail="Height in feet and inches is required"
+                detail="Height inches must be greater than 0"
             )
 
         return ((feet * 12) + inches) * 2.54
@@ -681,7 +696,9 @@ def workout_detail(
         exercise,
         set_number,
         weight_lbs,
-        reps
+        reps,
+        volume,
+        muscle_group
     FROM exercise_logs
     WHERE workout_id = %(workout_id)s
     ORDER BY exercise, set_number
@@ -703,13 +720,37 @@ def workout_detail(
                 [
                     "set_number",
                     "weight_lbs",
-                    "reps"
+                    "reps",
+                    "volume",
+                    "muscle_group"
                 ]
             ].to_dict(orient="records")
         })
 
     workout = workout_df.iloc[0].to_dict()
     workout["exercises"] = exercises
+
+    total_volume = float(logs_df["volume"].sum()) if not logs_df.empty else 0
+    workout["total_volume"] = total_volume
+
+    if logs_df.empty or total_volume == 0:
+
+        workout["muscle_distribution"] = []
+
+    else:
+
+        muscle_df = (
+            logs_df
+            .groupby("muscle_group", as_index=False)
+            .agg(total_volume=("volume", "sum"))
+            .sort_values("total_volume", ascending=False)
+        )
+        muscle_df["percentage"] = (
+            muscle_df["total_volume"]
+            / total_volume
+            * 100
+        )
+        workout["muscle_distribution"] = muscle_df.to_dict(orient="records")
 
     return workout
 
@@ -1047,7 +1088,11 @@ def create_body_metric(
 
 
 @app.get("/body-metrics")
-def body_metrics(user_id: str = Depends(get_current_user_id)):
+def body_metrics(
+    from_date: str | None = Query(None),
+    to_date: str | None = Query(None),
+    user_id: str = Depends(get_current_user_id)
+):
 
     query = """
     SELECT
@@ -1058,16 +1103,104 @@ def body_metrics(user_id: str = Depends(get_current_user_id)):
         created_at
     FROM body_metrics
     WHERE user_id = %(user_id)s
+        AND (%(from_date)s IS NULL OR metric_date >= %(from_date)s)
+        AND (%(to_date)s IS NULL OR metric_date <= %(to_date)s)
     ORDER BY metric_date DESC, created_at DESC
     """
 
     df = pd.read_sql(
         query,
         engine,
-        params={"user_id": user_id}
+        params={
+            "user_id": user_id,
+            "from_date": from_date,
+            "to_date": to_date
+        }
     )
 
     return df.to_dict(orient="records")
+
+
+@app.put("/body-metrics/{metric_id}")
+def update_body_metric(
+    metric_id: str,
+    metric: BodyMetricUpdate,
+    user_id: str = Depends(get_current_user_id)
+):
+
+    weight_kg = normalize_weight_kg(metric.weight, metric.weight_unit)
+    height_cm = normalize_height_cm(metric)
+
+    with engine.begin() as conn:
+
+        result = conn.execute(
+            text(
+                """
+                UPDATE body_metrics
+                SET metric_date = :metric_date,
+                    weight_kg = :weight_kg,
+                    height_cm = :height_cm
+                WHERE metric_id = :metric_id
+                    AND user_id = :user_id
+                """
+            ),
+            {
+                "metric_id": metric_id,
+                "user_id": user_id,
+                "metric_date": metric.metric_date,
+                "weight_kg": weight_kg,
+                "height_cm": height_cm
+            }
+        )
+
+    if result.rowcount == 0:
+
+        raise HTTPException(
+            status_code=404,
+            detail="Body metric not found"
+        )
+
+    return {
+        "metric_id": metric_id,
+        "metric_date": metric.metric_date,
+        "weight_kg": weight_kg,
+        "height_cm": height_cm
+    }
+
+
+@app.delete("/body-metrics/{metric_id}")
+def delete_body_metric(
+    metric_id: str,
+    user_id: str = Depends(get_current_user_id)
+):
+
+    with engine.begin() as conn:
+
+        result = conn.execute(
+            text(
+                """
+                DELETE FROM body_metrics
+                WHERE metric_id = :metric_id
+                    AND user_id = :user_id
+                """
+            ),
+            {
+                "metric_id": metric_id,
+                "user_id": user_id
+            }
+        )
+
+    if result.rowcount == 0:
+
+        raise HTTPException(
+            status_code=404,
+            detail="Body metric not found"
+        )
+
+    return {
+        "metric_id": metric_id,
+        "deleted": True
+    }
 
 
 @app.get("/weight-progression")
@@ -1116,6 +1249,182 @@ def weight_progression(user_id: str = Depends(get_current_user_id)):
         "monthly_change_lbs": float(monthly_change_lbs),
         "trend": "up" if monthly_change_kg > 0 else "down" if monthly_change_kg < 0 else "flat"
     }
+
+
+@app.get("/export/{table_name}")
+def export_table(
+    table_name: str,
+    file_format: str = Query("csv", pattern="^(csv|xlsx)$"),
+    user_id: str = Depends(get_current_user_id)
+):
+
+    if table_name not in EXPORT_TABLES:
+
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported export table"
+        )
+
+    if table_name == "exercise_logs":
+
+        query = """
+        SELECT
+            e.workout_id,
+            w.workout_date,
+            w.workout_type,
+            e.exercise,
+            e.set_number,
+            e.weight_lbs,
+            e.reps,
+            e.volume,
+            e.muscle_group
+        FROM exercise_logs e
+        JOIN workouts w
+            ON e.workout_id = w.workout_id
+        WHERE w.user_id = %(user_id)s
+        ORDER BY w.workout_date DESC, e.exercise, e.set_number
+        """
+
+    elif table_name == "workouts":
+
+        query = """
+        SELECT
+            workout_id,
+            workout_date,
+            workout_type,
+            user_id
+        FROM workouts
+        WHERE user_id = %(user_id)s
+        ORDER BY workout_date DESC
+        """
+
+    else:
+
+        query = """
+        SELECT
+            metric_id,
+            metric_date,
+            weight_kg,
+            height_cm,
+            created_at
+        FROM body_metrics
+        WHERE user_id = %(user_id)s
+        ORDER BY metric_date DESC, created_at DESC
+        """
+
+    df = pd.read_sql(
+        query,
+        engine,
+        params={"user_id": user_id}
+    )
+
+    if file_format == "csv":
+
+        buffer = io.StringIO()
+        df.to_csv(buffer, index=False)
+        buffer.seek(0)
+
+        return StreamingResponse(
+            iter([buffer.getvalue()]),
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": f"attachment; filename={table_name}.csv"
+            }
+        )
+
+    buffer = io.BytesIO()
+
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+
+        df.to_excel(writer, index=False, sheet_name=table_name[:31])
+
+    buffer.seek(0)
+
+    return StreamingResponse(
+        buffer,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f"attachment; filename={table_name}.xlsx"
+        }
+    )
+
+
+@app.post("/ai-chat")
+def ai_chat(
+    chat: ChatRequest,
+    user_id: str = Depends(get_current_user_id)
+):
+
+    summary_query = """
+    SELECT
+        COUNT(DISTINCT w.workout_id) AS total_workouts,
+        COALESCE(SUM(e.volume), 0) AS total_volume,
+        COUNT(e.*) AS total_sets
+    FROM workouts w
+    LEFT JOIN exercise_logs e
+        ON w.workout_id = e.workout_id
+    WHERE w.user_id = %(user_id)s
+    """
+    muscles_query = """
+    SELECT
+        e.muscle_group,
+        SUM(e.volume) AS total_volume,
+        COUNT(*) AS total_sets
+    FROM exercise_logs e
+    JOIN workouts w
+        ON e.workout_id = w.workout_id
+    WHERE w.user_id = %(user_id)s
+    GROUP BY e.muscle_group
+    ORDER BY total_volume DESC
+    LIMIT 8
+    """
+    recent_query = """
+    SELECT
+        workout_date,
+        workout_type
+    FROM workouts
+    WHERE user_id = %(user_id)s
+    ORDER BY workout_date DESC
+    LIMIT 5
+    """
+
+    params = {"user_id": user_id}
+    summary_df = pd.read_sql(summary_query, engine, params=params)
+    muscles_df = pd.read_sql(muscles_query, engine, params=params)
+    recent_df = pd.read_sql(recent_query, engine, params=params)
+
+    prompt = f"""
+You are a concise fitness analytics assistant inside a workout tracker.
+Answer the user's question using the available training summary when relevant.
+Do not invent exact values that are not in the data.
+
+User question:
+{chat.message}
+
+Dashboard summary:
+{summary_df.to_string(index=False)}
+
+Muscle distribution:
+{muscles_df.to_string(index=False)}
+
+Recent workouts:
+{recent_df.to_string(index=False)}
+"""
+
+    completion = client.chat.completions.create(
+        model="llama-3.1-8b-instant",
+        messages=[
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ]
+    )
+
+    return {
+        "answer": completion.choices[0].message.content
+    }
+
 
 @app.get("/dashboard")
 def dashboard(user_id: str = Depends(get_current_user_id)):
